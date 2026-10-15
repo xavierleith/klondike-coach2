@@ -30,7 +30,7 @@ header{display:flex;justify-content:space-between;align-items:center;gap:6px;fle
 .idx{position:absolute;top:3px;left:4px;width:24px;text-align:center;font-family:Georgia,"Times New Roman",serif;font-weight:900;line-height:.75}.rank{display:block;font-size:clamp(15px,4vw,23px)}.suit{display:block;font-size:clamp(12px,3.3vw,19px);margin-top:5px}
 .center{position:absolute;inset:0;display:grid;place-items:center;font:700 clamp(25px,7vw,43px) Georgia}
 .card.selected{outline:4px solid var(--gold);outline-offset:-1px;box-shadow:0 0 0 2px #0005,0 6px 12px #0009}
-.good{outline:3px solid #65f09c!important;outline-offset:1px}.legal{outline:2px dashed #ffe16b!important;outline-offset:1px}
+.good{outline:3px solid #65f09c!important;outline-offset:1px}.legal{outline:2px dashed #ffe16b!important;outline-offset:1px}.hintsource{outline:3px solid #7edcff!important;outline-offset:1px}
 .dragghost{position:absolute;z-index:9999;pointer-events:none;width:var(--cw);filter:drop-shadow(0 8px 8px #0009)}
 .recycle{position:absolute;inset:0;display:grid;place-items:center;font-size:25px}
 .footer{flex:none;display:flex;justify-content:space-between;font-size:8px;opacity:.75;border-top:1px solid #ffffff20;padding-top:4px}
@@ -52,17 +52,21 @@ header{display:flex;justify-content:space-between;align-items:center;gap:6px;fle
 <script>
 (()=>{
 const S=['♠','♥','♦','♣'], N=['','A','2','3','4','5','6','7','8','9','10','J','Q','K'];
-let stock=[],waste=[],tabs=[],found={},sel=null,hist=[],moves=0,score=0,start=0,timer=null,drag=null,mode='learn',initial=null,lastAnalysis=null,won=false,lastTableauMove=null;
+let stock=[],waste=[],tabs=[],found={},sel=null,hist=[],moves=0,score=0,start=0,timer=null,drag=null,mode='learn',initial=null,lastAnalysis=null,won=false,lastTableauMove=null,seenStockStates=new Set(),deadDeal=false,hintStep=0;
 const $=s=>document.querySelector(s), red=c=>c.s==='♥'||c.s==='♦', cp=x=>JSON.parse(JSON.stringify(x));
 function say(msg){if(mode==='off'){$('#coach').innerHTML='<b>COACH OFF</b> — play freely.';return} $('#coach').innerHTML='<b>COACH:</b> '+msg}
 function shuffled(){let d=[];for(const s of S)for(let r=1;r<=13;r++)d.push({s,r,up:false});for(let i=d.length-1;i;i--){let j=Math.floor(Math.random()*(i+1));[d[i],d[j]]=[d[j],d[i]]}return d}
 function snapshot(){return cp({stock,waste,tabs,found,moves,score})}
 function restore(x){stock=x.stock;waste=x.waste;tabs=x.tabs;found=x.found;moves=x.moves;score=x.score;sel=null}
 function save(){hist.push(snapshot());if(hist.length>150)hist.shift()}
+function cardKey(c){return c.s+c.r}
+function stockStateKey(){return stock.map(cardKey).join(',')+'|'+waste.map(cardKey).join(',')}
+function resetDeadTracker(){seenStockStates=new Set();deadDeal=false}
+function noteStockState(){let key=stockStateKey();if(seenStockStates.has(key)){deadDeal=true;return true}seenStockStates.add(key);return false}
 function fg(){return Math.min(innerWidth*.055,35)}
 function bg(){return Math.min(innerWidth*.025,16)}
 function tick(){let n=Math.floor((Date.now()-start)/1000);$('#time').textContent=Math.floor(n/60)+':'+String(n%60).padStart(2,'0')}
-function newDeal(){clearInterval(timer);let d=shuffled();tabs=Array.from({length:7},()=>[]);for(let c=0;c<7;c++)for(let r=0;r<=c;r++){let x=d.pop();x.up=r===c;tabs[c].push(x)}stock=d;waste=[];found=Object.fromEntries(S.map(s=>[s,[]]));moves=score=0;sel=null;hist=[];won=false;lastTableauMove=null;initial=snapshot();start=Date.now();timer=setInterval(tick,1000);render();analyze(true);tick()}
+function newDeal(){clearInterval(timer);let d=shuffled();tabs=Array.from({length:7},()=>[]);for(let c=0;c<7;c++)for(let r=0;r<=c;r++){let x=d.pop();x.up=r===c;tabs[c].push(x)}stock=d;waste=[];found=Object.fromEntries(S.map(s=>[s,[]]));moves=score=0;sel=null;hist=[];won=false;lastTableauMove=null;resetDeadTracker();initial=snapshot();start=Date.now();timer=setInterval(tick,1000);render();analyze(true);tick()}
 function card(c,on=false){let e=document.createElement('button');e.className='card '+(!c.up?'back':red(c)?'red':'black')+(on?' selected':'');if(c.up)e.innerHTML='<span class="idx"><span class="rank">'+N[c.r]+'</span><span class="suit">'+c.s+'</span></span><span class="center">'+c.s+'</span>';return e}
 function selectedCards(){if(!sel)return[];if(sel.type==='waste')return[waste.at(-1)];if(sel.type==='foundation')return[found[sel.s].at(-1)];return tabs[sel.c].slice(sel.r)}
 function same(a,b){return a&&b&&a.type===b.type&&(a.type==='waste'||(a.type==='foundation'&&a.s===b.s)||(a.type==='tab'&&a.c===b.c&&a.r===b.r))}
@@ -72,9 +76,9 @@ function canFoundation(source,s){let old=sel;sel=source;let a=selectedCards();se
 function removeSelected(){let a=selectedCards();if(sel.type==='waste')waste.pop();else if(sel.type==='foundation')found[sel.s].pop();else tabs[sel.c].splice(sel.r);return a}
 function flip(ci){let x=tabs[ci].at(-1);if(x&&!x.up){x.up=true;score+=5;return true}return false}
 function sourceLabel(s){let old=sel;sel=s;let c=selectedCards()[0];sel=old;return c?N[c.r]+c.s:''}
-function select(s){if(same(sel,s)){sel=null;render();return}sel=s;render();if(mode==='learn'){let c=selectedCards()[0];say('You selected <b>'+N[c.r]+c.s+'</b>. Green marks my preferred destination; yellow marks other legal choices.')}}
-function moveCol(ci,source=sel){if(!source||!canCol(source,ci))return false;sel=source;save();let old=sel.type==='tab'?sel.c:null,fromWaste=sel.type==='waste';let a=removeSelected();tabs[ci].push(...a);moves++;if(fromWaste)score+=5;let exposed=old!==null&&flip(old);lastTableauMove=old!==null?{from:old,to:ci,card:a[0]?a[0].s+a[0].r:'',revealed:exposed}:null;sel=null;render();analyze(false,exposed?'That uncovered a hidden card — excellent progress.':'Legal move completed.');return true}
-function moveFoundation(s,source=sel){if(!source||!canFoundation(source,s))return false;sel=source;save();let old=sel.type==='tab'?sel.c:null;let c=removeSelected()[0];found[s].push(c);moves++;score+=10;if(old!==null)flip(old);sel=null;render();analyze(false,'Foundation move completed.');return true}
+function select(s){if(same(sel,s)){sel=null;render();return}sel=s;render()}
+function moveCol(ci,source=sel){if(!source||!canCol(source,ci))return false;clearHints();sel=source;save();let old=sel.type==='tab'?sel.c:null,fromWaste=sel.type==='waste';let a=removeSelected();tabs[ci].push(...a);moves++;if(fromWaste)score+=5;let exposed=old!==null&&flip(old);lastTableauMove=old!==null?{from:old,to:ci,card:a[0]?a[0].s+a[0].r:'',revealed:exposed}:null;resetDeadTracker();sel=null;render();analyze(false,exposed?'That uncovered a hidden card — excellent progress.':'Legal move completed.');return true}
+function moveFoundation(s,source=sel){if(!source||!canFoundation(source,s))return false;clearHints();sel=source;save();let old=sel.type==='tab'?sel.c:null;let c=removeSelected()[0];found[s].push(c);moves++;score+=10;if(old!==null)flip(old);resetDeadTracker();sel=null;render();analyze(false,'Foundation move completed.');return true}
 function legalMoves(){
  let out=[];
  for(let c=0;c<7;c++){
@@ -105,19 +109,41 @@ function legalMoves(){
  }
  return out.sort((a,b)=>b.priority-a.priority)
 }
+function conceptFor(m){
+ if(!m)return stock.length?'No productive board move is available right now. Think about the Draw-3 sequence.':'No productive board move is available right now.';
+ if(m.kind==='foundation')return m.src.type==='waste'?'Look at the waste pile for a card that can safely leave the stock cycle.':'Look for a safe foundation move.';
+ if(m.src.type==='waste')return 'Look at the waste pile for a move that changes your Draw-3 access.';
+ if(m.kind==='col')return m.why.includes('face-down')?'Look for a tableau move that exposes a face-down card.':m.why.includes('column')?'Look for a move that creates useful space.':'Look for a tableau move that creates real progress.';
+ return 'Look for a move that improves access to hidden cards.'
+}
 function analyze(initialMsg=false,prefix=''){
  let lm=legalMoves(),productive=lm.filter(m=>m.productive&&!m.reverse),best=productive[0]||null;lastAnalysis=best;
+ if(deadDeal&&mode!=='off'){say('<b>Likely dead deal.</b> The same Draw-3 stock state repeated without meaningful progress. Another recycle should repeat the sequence.');return}
  if(mode==='off'){say('');return}
- if(best){let dest=best.kind==='col'?'column '+(best.d+1):'the '+best.s+' foundation';let txt=(prefix?prefix+' ':'')+'My preferred move is <b>'+sourceLabel(best.src)+' → '+dest+'</b>.';if(mode==='learn')txt+=' '+best.why;say(txt)}
- else if(stock.length)say((prefix?prefix+' ':'')+'No productive move stands out. <b>Draw 3</b> rather than shuffling cards back and forth.')
- else if(waste.length)say('No current move is available. Recycle the waste into the stock; in Draw 3, the next pass may expose a different sequence.')
- else say('No legal forward move is available. This deal may be blocked.');
- renderHighlights()
+ if(initialMsg){say(mode==='learn'?'<b>Learn mode:</b> I’ll teach strategy after meaningful moves, but I won’t show the answer unless you ask for a Hint.':'<b>Coach mode:</b> I’ll mostly stay quiet and step in for dead deals or important warnings. Use Hint when you want help.');return}
+ if(mode==='coach'){if(prefix&&prefix.includes('uncovered'))say(prefix);else say('Play on — I’ll step in if something important comes up.');return}
+ if(prefix&&prefix.includes('uncovered'))say(prefix+' <b>Good priority:</b> uncovering hidden cards usually creates the most new information.');
+ else if(prefix&&prefix.includes('Foundation'))say(prefix+' Low foundation cards are usually useful progress, but avoid rushing high cards up when they may still be needed in the tableau.');
+ else if(prefix&&prefix.includes('drew'))say('You drew 3. Watch which waste cards become reachable; removing one can change the next Draw-3 pass.');
+ else if(prefix&&prefix.includes('recycled'))say('New stock pass. Compare what becomes reachable before recycling again.');
+ else say('Keep looking for moves that reveal hidden cards, create useful space, or improve waste access.')
+}
+function clearHints(){hintStep=0;document.querySelectorAll('.good,.legal,.hintsource').forEach(e=>e.classList.remove('good','legal','hintsource'))}
+function sourceElement(src){
+ if(!src)return null;
+ if(src.type==='waste')return $('#waste .card');
+ if(src.type==='foundation')return document.querySelector('.foundation[data-suit="'+src.s+'"] .card');
+ if(src.type==='tab'){let col=document.querySelector('.col[data-col="'+src.c+'"]');return col?col.children[src.r]:null}
+ return null
 }
 function renderHighlights(){
- document.querySelectorAll('.good,.legal').forEach(e=>e.classList.remove('good','legal'));
- if(mode==='off')return;
- let lm=legalMoves();lm.forEach((m,i)=>{let el=m.kind==='col'?document.querySelector('.col[data-col="'+m.d+'"]'):document.querySelector('.foundation[data-suit="'+m.s+'"]');if(el)el.classList.add(i===0?'good':'legal')})
+ document.querySelectorAll('.good,.legal,.hintsource').forEach(e=>e.classList.remove('good','legal','hintsource'));
+ if(hintStep<2||!lastAnalysis)return;
+ let src=sourceElement(lastAnalysis.src);if(src)src.classList.add('hintsource');
+ if(hintStep<3)return;
+ let lm=legalMoves().filter(m=>m.productive&&!m.reverse),best=lastAnalysis;
+ lm.filter(m=>same(m.src,best.src)).forEach(m=>{let el=m.kind==='col'?document.querySelector('.col[data-col="'+m.d+'"]'):document.querySelector('.foundation[data-suit="'+m.s+'"]');if(el)el.classList.add(m===best?'good':'legal')});
+ let dest=best.kind==='col'?document.querySelector('.col[data-col="'+best.d+'"]'):document.querySelector('.foundation[data-suit="'+best.s+'"]');if(dest){dest.classList.remove('legal');dest.classList.add('good')}
 }
 function bindDrag(el,source){
  let id=null,sx=0,sy=0;
@@ -139,11 +165,11 @@ function render(){
  let h=S.reduce((n,s)=>n+found[s].length,0);$('#home').textContent=h+'/52';if(h===52&&!won){won=true;clearInterval(timer);setTimeout(()=>{$('#winText').textContent='Score '+score+' • '+moves+' moves • '+$('#time').textContent;$('#modal').classList.add('show')},300)}
  renderHighlights()
 }
-$('#stock').onclick=()=>{sel=null;if(stock.length){save();let n=Math.min(3,stock.length);for(let i=0;i<n;i++){let c=stock.pop();c.up=true;waste.push(c)}moves++;render();analyze(false,'You drew '+n+' cards.')}else if(waste.length){save();stock=waste.reverse();stock.forEach(c=>c.up=false);waste=[];moves++;render();analyze(false,'Stock recycled.')}};
-$('#new').onclick=newDeal;$('#restart').onclick=()=>{if(initial){restore(cp(initial));hist=[];start=Date.now();won=false;render();analyze(true)}};$('#undo').onclick=()=>{if(!hist.length){say('Nothing to undo yet.');return}restore(hist.pop());render();analyze(false,'Move undone.')};
-$('#hint').onclick=()=>analyze(false,'Here’s what I see.');
-$('#why').onclick=()=>{if(lastAnalysis)say('<b>Why this move?</b> '+lastAnalysis.why+' In general: reveal hidden cards first, create useful empty columns, avoid rushing high cards to foundations, and remember that removing waste cards changes Draw-3 access.');else say('There is no recommended board move right now. Drawing or recycling the stock is the next step.')};
-document.querySelectorAll('.modes button').forEach(b=>b.onclick=()=>{mode=b.dataset.mode;document.querySelectorAll('.modes button').forEach(x=>x.classList.toggle('active',x===b));analyze(true)});
+$('#stock').onclick=()=>{clearHints();sel=null;if(stock.length){save();let n=Math.min(3,stock.length);for(let i=0;i<n;i++){let c=stock.pop();c.up=true;waste.push(c)}moves++;noteStockState();render();analyze(false,'You drew '+n+' cards.')}else if(waste.length){save();stock=waste.reverse();stock.forEach(c=>c.up=false);waste=[];moves++;noteStockState();render();analyze(false,'Stock recycled.')}};
+$('#new').onclick=newDeal;$('#restart').onclick=()=>{if(initial){restore(cp(initial));hist=[];resetDeadTracker();start=Date.now();won=false;render();analyze(true)}};$('#undo').onclick=()=>{if(!hist.length){say('Nothing to undo yet.');return}restore(hist.pop());resetDeadTracker();render();analyze(false,'Move undone.')};
+$('#hint').onclick=()=>{let lm=legalMoves(),best=lm.filter(m=>m.productive&&!m.reverse)[0]||null;lastAnalysis=best;if(deadDeal){say('<b>Likely dead deal.</b> I’m seeing the same Draw-3 cycle with no meaningful progress.');return}if(!best){say(stock.length?'No productive board move stands out. Try the next Draw 3.':'I don’t see a productive move from this position.');return}hintStep=Math.min(3,hintStep+1);if(hintStep===1)say('<b>Hint 1/3:</b> '+conceptFor(best));else if(hintStep===2)say('<b>Hint 2/3:</b> I’ve marked the card to consider in blue.');else{let dest=best.kind==='col'?'column '+(best.d+1):'the '+best.s+' foundation';say('<b>Hint 3/3:</b> '+sourceLabel(best.src)+' → '+dest+'. Green is my preferred destination; yellow shows alternatives for that card.')}renderHighlights()};
+$('#why').onclick=()=>{if(lastAnalysis)say('<b>Why this move?</b> '+lastAnalysis.why+' In general: reveal hidden cards first, create useful empty columns, avoid rushing high cards to foundations, and remember that removing waste cards changes Draw-3 access.');else if(deadDeal)say('<b>Why I think it is dead:</b> the same Draw-3 stock/waste state repeated without tableau or foundation progress. Recycling again should reproduce the same sequence.');else say('There is no recommended board move right now. Drawing or recycling the stock is the next step.')};
+document.querySelectorAll('.modes button').forEach(b=>b.onclick=()=>{mode=b.dataset.mode;clearHints();document.querySelectorAll('.modes button').forEach(x=>x.classList.toggle('active',x===b));analyze(true)});
 $('#auto').onclick=()=>{let lm=legalMoves();let m=lm.find(x=>x.kind==='foundation');if(m){moveFoundation(m.s,m.src)}else say('Auto only sends a currently safe/legal card to the foundation. No obvious auto move is available.')};
 $('#again').onclick=()=>{$('#modal').classList.remove('show');newDeal()};
 newDeal();
