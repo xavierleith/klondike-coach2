@@ -52,7 +52,7 @@ header{display:flex;justify-content:space-between;align-items:center;gap:6px;fle
 <script>
 (()=>{
 const S=['♠','♥','♦','♣'], N=['','A','2','3','4','5','6','7','8','9','10','J','Q','K'];
-let stock=[],waste=[],tabs=[],found={},sel=null,hist=[],moves=0,score=0,start=0,timer=null,drag=null,mode='learn',initial=null,lastAnalysis=null,won=false;
+let stock=[],waste=[],tabs=[],found={},sel=null,hist=[],moves=0,score=0,start=0,timer=null,drag=null,mode='learn',initial=null,lastAnalysis=null,won=false,lastTableauMove=null;
 const $=s=>document.querySelector(s), red=c=>c.s==='♥'||c.s==='♦', cp=x=>JSON.parse(JSON.stringify(x));
 function say(msg){if(mode==='off'){$('#coach').innerHTML='<b>COACH OFF</b> — play freely.';return} $('#coach').innerHTML='<b>COACH:</b> '+msg}
 function shuffled(){let d=[];for(const s of S)for(let r=1;r<=13;r++)d.push({s,r,up:false});for(let i=d.length-1;i;i--){let j=Math.floor(Math.random()*(i+1));[d[i],d[j]]=[d[j],d[i]]}return d}
@@ -62,7 +62,7 @@ function save(){hist.push(snapshot());if(hist.length>150)hist.shift()}
 function fg(){return Math.min(innerWidth*.055,35)}
 function bg(){return Math.min(innerWidth*.025,16)}
 function tick(){let n=Math.floor((Date.now()-start)/1000);$('#time').textContent=Math.floor(n/60)+':'+String(n%60).padStart(2,'0')}
-function newDeal(){clearInterval(timer);let d=shuffled();tabs=Array.from({length:7},()=>[]);for(let c=0;c<7;c++)for(let r=0;r<=c;r++){let x=d.pop();x.up=r===c;tabs[c].push(x)}stock=d;waste=[];found=Object.fromEntries(S.map(s=>[s,[]]));moves=score=0;sel=null;hist=[];won=false;initial=snapshot();start=Date.now();timer=setInterval(tick,1000);render();analyze(true);tick()}
+function newDeal(){clearInterval(timer);let d=shuffled();tabs=Array.from({length:7},()=>[]);for(let c=0;c<7;c++)for(let r=0;r<=c;r++){let x=d.pop();x.up=r===c;tabs[c].push(x)}stock=d;waste=[];found=Object.fromEntries(S.map(s=>[s,[]]));moves=score=0;sel=null;hist=[];won=false;lastTableauMove=null;initial=snapshot();start=Date.now();timer=setInterval(tick,1000);render();analyze(true);tick()}
 function card(c,on=false){let e=document.createElement('button');e.className='card '+(!c.up?'back':red(c)?'red':'black')+(on?' selected':'');if(c.up)e.innerHTML='<span class="idx"><span class="rank">'+N[c.r]+'</span><span class="suit">'+c.s+'</span></span><span class="center">'+c.s+'</span>';return e}
 function selectedCards(){if(!sel)return[];if(sel.type==='waste')return[waste.at(-1)];if(sel.type==='foundation')return[found[sel.s].at(-1)];return tabs[sel.c].slice(sel.r)}
 function same(a,b){return a&&b&&a.type===b.type&&(a.type==='waste'||(a.type==='foundation'&&a.s===b.s)||(a.type==='tab'&&a.c===b.c&&a.r===b.r))}
@@ -73,19 +73,43 @@ function removeSelected(){let a=selectedCards();if(sel.type==='waste')waste.pop(
 function flip(ci){let x=tabs[ci].at(-1);if(x&&!x.up){x.up=true;score+=5;return true}return false}
 function sourceLabel(s){let old=sel;sel=s;let c=selectedCards()[0];sel=old;return c?N[c.r]+c.s:''}
 function select(s){if(same(sel,s)){sel=null;render();return}sel=s;render();if(mode==='learn'){let c=selectedCards()[0];say('You selected <b>'+N[c.r]+c.s+'</b>. Green marks my preferred destination; yellow marks other legal choices.')}}
-function moveCol(ci,source=sel){if(!source||!canCol(source,ci))return false;sel=source;save();let old=sel.type==='tab'?sel.c:null,fromWaste=sel.type==='waste';let a=removeSelected();tabs[ci].push(...a);moves++;if(fromWaste)score+=5;let exposed=old!==null&&flip(old);sel=null;render();analyze(false,exposed?'That uncovered a hidden card — usually excellent.':'Legal move completed.');return true}
+function moveCol(ci,source=sel){if(!source||!canCol(source,ci))return false;sel=source;save();let old=sel.type==='tab'?sel.c:null,fromWaste=sel.type==='waste';let a=removeSelected();tabs[ci].push(...a);moves++;if(fromWaste)score+=5;let exposed=old!==null&&flip(old);lastTableauMove=old!==null?{from:old,to:ci,card:a[0]?a[0].s+a[0].r:'',revealed:exposed}:null;sel=null;render();analyze(false,exposed?'That uncovered a hidden card — excellent progress.':'Legal move completed.');return true}
 function moveFoundation(s,source=sel){if(!source||!canFoundation(source,s))return false;sel=source;save();let old=sel.type==='tab'?sel.c:null;let c=removeSelected()[0];found[s].push(c);moves++;score+=10;if(old!==null)flip(old);sel=null;render();analyze(false,'Foundation move completed.');return true}
 function legalMoves(){
  let out=[];
- for(let c=0;c<7;c++){let col=tabs[c];for(let r=0;r<col.length;r++){if(!col[r].up)continue;let src={type:'tab',c,r};for(let d=0;d<7;d++)if(canCol(src,d)){let reveals=r>0&&!col[r-1].up;let empties=(r===0&&col.length===1);let priority=(reveals?100:0)+(tabs[d].length===0?25:0)+(empties?15:0);out.push({kind:'col',src,d,priority,why:reveals?'It exposes a face-down card, which increases your available information and options.':tabs[d].length===0?'It uses an empty column productively.':'It reorganizes the tableau without exposing a card.'})}for(const s of S)if(canFoundation(src,s)){let cr=col[r];let safe=cr.r<=2;out.push({kind:'foundation',src,s,priority:safe?45:8,why:safe?'Aces and 2s are generally safe to advance early.':'This is legal, but higher foundation cards can sometimes be needed as tableau supports.'})}}}
- if(waste.length){let src={type:'waste'};for(let d=0;d<7;d++)if(canCol(src,d))out.push({kind:'col',src,d,priority:35,why:'Playing from the waste changes the Draw-3 sequence and may unlock deeper stock cards.'});for(const s of S)if(canFoundation(src,s)){let c=waste.at(-1);out.push({kind:'foundation',src,s,priority:c.r<=2?50:15,why:'Removing a waste card changes which stock cards become reachable on later passes.'})}}
+ for(let c=0;c<7;c++){
+  let col=tabs[c];
+  for(let r=0;r<col.length;r++){
+   if(!col[r].up)continue;
+   let src={type:'tab',c,r}, moving=col.slice(r), lead=moving[0];
+   for(let d=0;d<7;d++)if(canCol(src,d)){
+    let reveals=r>0&&!col[r-1].up;
+    let freesColumn=r===0;
+    let reverse=!!(lastTableauMove&&!lastTableauMove.revealed&&lastTableauMove.from===d&&lastTableauMove.to===c&&lastTableauMove.card===lead.s+lead.r);
+    let usefulEmpty=tabs[d].length===0&&lead.r===13&&freesColumn;
+    let priority=reveals?120:usefulEmpty?55:freesColumn?35:5;
+    if(reverse)priority=-1000;
+    let why=reveals?'It exposes a face-down card, which is the strongest kind of progress.':usefulEmpty?'It moves a King stack into an empty column while freeing another column.':freesColumn?'It clears a tableau column and may create space for a King.':'It is legal, but it does not reveal a card or create space.';
+    out.push({kind:'col',src,d,priority,productive:reveals||usefulEmpty||freesColumn,reverse,why});
+   }
+   for(const s of S)if(canFoundation(src,s)){
+    let cr=col[r], safe=cr.r<=2;
+    out.push({kind:'foundation',src,s,priority:safe?65:18,productive:true,why:safe?'Aces and 2s are generally safe to advance early.':'This advances the foundation, but keep an eye on whether the card is still useful in the tableau.'});
+   }
+  }
+ }
+ if(waste.length){
+  let src={type:'waste'};
+  for(let d=0;d<7;d++)if(canCol(src,d))out.push({kind:'col',src,d,priority:50,productive:true,why:'Playing from the waste removes a stock card from circulation and changes future Draw-3 access.'});
+  for(const s of S)if(canFoundation(src,s)){let c=waste.at(-1);out.push({kind:'foundation',src,s,priority:c.r<=2?70:40,productive:true,why:'Moving a waste card out of the stock cycle improves access to cards behind it.'})}
+ }
  return out.sort((a,b)=>b.priority-a.priority)
 }
 function analyze(initialMsg=false,prefix=''){
- let lm=legalMoves(),best=lm[0]||null;lastAnalysis=best;
+ let lm=legalMoves(),productive=lm.filter(m=>m.productive&&!m.reverse),best=productive[0]||null;lastAnalysis=best;
  if(mode==='off'){say('');return}
  if(best){let dest=best.kind==='col'?'column '+(best.d+1):'the '+best.s+' foundation';let txt=(prefix?prefix+' ':'')+'My preferred move is <b>'+sourceLabel(best.src)+' → '+dest+'</b>.';if(mode==='learn')txt+=' '+best.why;say(txt)}
- else if(stock.length)say((prefix?prefix+' ':'')+'No productive tableau move stands out. <b>Draw 3</b> and reassess the waste card.')
+ else if(stock.length)say((prefix?prefix+' ':'')+'No productive move stands out. <b>Draw 3</b> rather than shuffling cards back and forth.')
  else if(waste.length)say('No current move is available. Recycle the waste into the stock; in Draw 3, the next pass may expose a different sequence.')
  else say('No legal forward move is available. This deal may be blocked.');
  renderHighlights()
